@@ -45,7 +45,8 @@ import com.taobao.middleware.cli.annotations.Summary;
  */
 @Name("arthas-boot")
 @Summary("Bootstrap Arthas")
-@Description("EXAMPLES:\n" + "  java -jar arthas-boot.jar <pid>\n" + "  java -jar arthas-boot.jar --target-ip 0.0.0.0\n"
+@Description("NOTE: Arthas 4 supports JDK 8+. If you need to diagnose applications running on JDK 6/7, you can use Arthas 3.\n\n"
+                +"EXAMPLES:\n" + "  java -jar arthas-boot.jar <pid>\n"
                 + "  java -jar arthas-boot.jar --telnet-port 9999 --http-port -1\n"
                 + "  java -jar arthas-boot.jar --username admin --password <password>\n"
                 + "  java -jar arthas-boot.jar --tunnel-server 'ws://192.168.10.11:7777/ws' --app-name demoapp\n"
@@ -53,7 +54,7 @@ import com.taobao.middleware.cli.annotations.Summary;
                 + "  java -jar arthas-boot.jar --stat-url 'http://192.168.10.11:8080/api/stat'\n"
                 + "  java -jar arthas-boot.jar -c 'sysprop; thread' <pid>\n"
                 + "  java -jar arthas-boot.jar -f batch.as <pid>\n"
-                + "  java -jar arthas-boot.jar --use-version 3.5.2\n"
+                + "  java -jar arthas-boot.jar --use-version 4.0.4\n"
                 + "  java -jar arthas-boot.jar --versions\n"
                 + "  java -jar arthas-boot.jar --select math-game\n"
                 + "  java -jar arthas-boot.jar --session-timeout 3600\n" + "  java -jar arthas-boot.jar --attach-only\n"
@@ -132,8 +133,15 @@ public class Bootstrap {
     private String disabledCommands;
 
 	static {
-        ARTHAS_LIB_DIR = new File(
-                System.getProperty("user.home") + File.separator + ".arthas" + File.separator + "lib");
+        String arthasLibDirEnv = System.getenv("ARTHAS_LIB_DIR");
+        if (arthasLibDirEnv != null) {
+            ARTHAS_LIB_DIR = new File(arthasLibDirEnv);
+            AnsiLog.info("ARTHAS_LIB_DIR: " + arthasLibDirEnv);
+        } else {
+            ARTHAS_LIB_DIR = new File(
+                    System.getProperty("user.home") + File.separator + ".arthas" + File.separator + "lib");
+        }
+
         try {
             ARTHAS_LIB_DIR.mkdirs();
         } catch (Throwable t) {
@@ -305,12 +313,25 @@ public class Bootstrap {
     public static void main(String[] args) throws ParserConfigurationException, SAXException, IOException,
                     ClassNotFoundException, NoSuchMethodException, SecurityException, IllegalAccessException,
                     IllegalArgumentException, InvocationTargetException {
+        String javaHome = System.getProperty("java.home");
+        if (javaHome != null) {
+            AnsiLog.info("JAVA_HOME: " + javaHome);
+        }
         Package bootstrapPackage = Bootstrap.class.getPackage();
         if (bootstrapPackage != null) {
             String arthasBootVersion = bootstrapPackage.getImplementationVersion();
             if (arthasBootVersion != null) {
                 AnsiLog.info("arthas-boot version: " + arthasBootVersion);
             }
+        }
+
+        try {
+            String javaToolOptions = System.getenv("JAVA_TOOL_OPTIONS");
+            if (javaToolOptions != null && !javaToolOptions.trim().isEmpty()) {
+                AnsiLog.info("JAVA_TOOL_OPTIONS: " + javaToolOptions);
+            }
+        } catch (Throwable e) {
+            // ignore
         }
 
         Bootstrap bootstrap = new Bootstrap();
@@ -392,7 +413,7 @@ public class Bootstrap {
                             pid, bootstrap.getHttpPortOrDefault());
             AnsiLog.error("1. Try to restart arthas-boot, select process {}, shutdown it first with running the 'stop' command.",
                             httpPortPid);
-            AnsiLog.error("2. Or try to use different http port, for example: java -jar arthas-boot.jar --telnet-port 9998 --http-port 9999", httpPortPid);
+            AnsiLog.error("2. Or try to use different http port, for example: java -jar arthas-boot.jar --telnet-port 9998 --http-port 9999");
             System.exit(1);
         }
 
@@ -408,14 +429,14 @@ public class Bootstrap {
                             + File.separator + bootstrap.getUseVersion() + File.separator + "arthas");
             if (!specialVersionDir.exists()) {
                 // try to download arthas from remote server.
-                DownloadUtils.downArthasPackaging(bootstrap.getRepoMirror(), bootstrap.isuseHttp(),
+                DownloadUtils.downArthasPackaging(bootstrap.getRepoMirror(), bootstrap.isUseHttp(),
                                 bootstrap.getUseVersion(), ARTHAS_LIB_DIR.getAbsolutePath());
             }
             verifyArthasHome(specialVersionDir.getAbsolutePath());
             arthasHomeDir = specialVersionDir;
         }
 
-        // Try set the directory where arthas-boot.jar is located to arhtas home
+        // Try set the directory where arthas-boot.jar is located to arthas home
         if (arthasHomeDir == null) {
             CodeSource codeSource = Bootstrap.class.getProtectionDomain().getCodeSource();
             if (codeSource != null) {
@@ -449,16 +470,16 @@ public class Bootstrap {
             List<String> versionList = listNames(ARTHAS_LIB_DIR);
             Collections.sort(versionList);
 
-            String localLastestVersion = null;
+            String localLatestVersion = null;
             if (!versionList.isEmpty()) {
-                localLastestVersion = versionList.get(versionList.size() - 1);
+                localLatestVersion = versionList.get(versionList.size() - 1);
             }
 
-            String remoteLastestVersion = DownloadUtils.readLatestReleaseVersion();
+            String remoteLatestVersion = DownloadUtils.readLatestReleaseVersion();
 
             boolean needDownload = false;
-            if (localLastestVersion == null) {
-                if (remoteLastestVersion == null) {
+            if (localLatestVersion == null) {
+                if (remoteLatestVersion == null) {
                     // exit
                     AnsiLog.error("Can not find Arthas under local: {} and remote repo mirror: {}", ARTHAS_LIB_DIR,
                             bootstrap.getRepoMirror());
@@ -469,23 +490,23 @@ public class Bootstrap {
                     needDownload = true;
                 }
             } else {
-                if (remoteLastestVersion != null) {
-                    if (localLastestVersion.compareTo(remoteLastestVersion) < 0) {
-                        AnsiLog.info("local lastest version: {}, remote lastest version: {}, try to download from remote.",
-                                        localLastestVersion, remoteLastestVersion);
+                if (remoteLatestVersion != null) {
+                    if (localLatestVersion.compareTo(remoteLatestVersion) < 0) {
+                        AnsiLog.info("local latest version: {}, remote latest version: {}, try to download from remote.",
+                                localLatestVersion, remoteLatestVersion);
                         needDownload = true;
                     }
                 }
             }
             if (needDownload) {
                 // try to download arthas from remote server.
-                DownloadUtils.downArthasPackaging(bootstrap.getRepoMirror(), bootstrap.isuseHttp(),
-                                remoteLastestVersion, ARTHAS_LIB_DIR.getAbsolutePath());
-                localLastestVersion = remoteLastestVersion;
+                DownloadUtils.downArthasPackaging(bootstrap.getRepoMirror(), bootstrap.isUseHttp(),
+                        remoteLatestVersion, ARTHAS_LIB_DIR.getAbsolutePath());
+                localLatestVersion = remoteLatestVersion;
             }
 
             // get the latest version
-            arthasHomeDir = new File(ARTHAS_LIB_DIR, localLastestVersion + File.separator + "arthas");
+            arthasHomeDir = new File(ARTHAS_LIB_DIR, localLatestVersion + File.separator + "arthas");
         }
 
         verifyArthasHome(arthasHomeDir.getAbsolutePath());
@@ -498,74 +519,78 @@ public class Bootstrap {
             //double check telnet port and pid before attach
             telnetPortPid = findProcessByTelnetClient(arthasHomeDir.getAbsolutePath(), bootstrap.getTelnetPortOrDefault());
             checkTelnetPortPid(bootstrap, telnetPortPid, pid);
+            if (telnetPortPid > 0 && pid == telnetPortPid) {
+                AnsiLog.info("The target process already listen port {}, skip attach.", bootstrap.getTelnetPortOrDefault());
+            } else {
 
-            // start arthas-core.jar
-            List<String> attachArgs = new ArrayList<String>();
-            attachArgs.add("-jar");
-            attachArgs.add(new File(arthasHomeDir, "arthas-core.jar").getAbsolutePath());
-            attachArgs.add("-pid");
-            attachArgs.add("" + pid);
-            if (bootstrap.getTargetIp() != null) {
-                attachArgs.add("-target-ip");
-                attachArgs.add(bootstrap.getTargetIp());
-            }
+                // start arthas-core.jar
+                List<String> attachArgs = new ArrayList<String>();
+                attachArgs.add("-jar");
+                attachArgs.add(new File(arthasHomeDir, "arthas-core.jar").getAbsolutePath());
+                attachArgs.add("-pid");
+                attachArgs.add("" + pid);
+                if (bootstrap.getTargetIp() != null) {
+                    attachArgs.add("-target-ip");
+                    attachArgs.add(bootstrap.getTargetIp());
+                }
 
-            if (bootstrap.getTelnetPort() != null) {
-                attachArgs.add("-telnet-port");
-                attachArgs.add("" + bootstrap.getTelnetPort());
-            }
+                if (bootstrap.getTelnetPort() != null) {
+                    attachArgs.add("-telnet-port");
+                    attachArgs.add("" + bootstrap.getTelnetPort());
+                }
 
-            if (bootstrap.getHttpPort() != null) {
-                attachArgs.add("-http-port");
-                attachArgs.add("" + bootstrap.getHttpPort());
-            }
+                if (bootstrap.getHttpPort() != null) {
+                    attachArgs.add("-http-port");
+                    attachArgs.add("" + bootstrap.getHttpPort());
+                }
 
-            attachArgs.add("-core");
-            attachArgs.add(new File(arthasHomeDir, "arthas-core.jar").getAbsolutePath());
-            attachArgs.add("-agent");
-            attachArgs.add(new File(arthasHomeDir, "arthas-agent.jar").getAbsolutePath());
-            if (bootstrap.getSessionTimeout() != null) {
-                attachArgs.add("-session-timeout");
-                attachArgs.add("" + bootstrap.getSessionTimeout());
-            }
+                attachArgs.add("-core");
+                attachArgs.add(new File(arthasHomeDir, "arthas-core.jar").getAbsolutePath());
+                attachArgs.add("-agent");
+                attachArgs.add(new File(arthasHomeDir, "arthas-agent.jar").getAbsolutePath());
+                if (bootstrap.getSessionTimeout() != null) {
+                    attachArgs.add("-session-timeout");
+                    attachArgs.add("" + bootstrap.getSessionTimeout());
+                }
 
-            if (bootstrap.getAppName() != null) {
-                attachArgs.add("-app-name");
-                attachArgs.add(bootstrap.getAppName());
-            }
+                if (bootstrap.getAppName() != null) {
+                    attachArgs.add("-app-name");
+                    attachArgs.add(bootstrap.getAppName());
+                }
 
-            if (bootstrap.getUsername() != null) {
-                attachArgs.add("-username");
-                attachArgs.add(bootstrap.getUsername());
-            }
-            if (bootstrap.getPassword() != null) {
-                attachArgs.add("-password");
-                attachArgs.add(bootstrap.getPassword());
-            }
+                if (bootstrap.getUsername() != null) {
+                    attachArgs.add("-username");
+                    attachArgs.add(bootstrap.getUsername());
+                }
+                if (bootstrap.getPassword() != null) {
+                    attachArgs.add("-password");
+                    attachArgs.add(bootstrap.getPassword());
+                }
 
-            if (bootstrap.getTunnelServer() != null) {
-                attachArgs.add("-tunnel-server");
-                attachArgs.add(bootstrap.getTunnelServer());
-            }
-            if (bootstrap.getAgentId() != null) {
-                attachArgs.add("-agent-id");
-                attachArgs.add(bootstrap.getAgentId());
-            }
-            if (bootstrap.getStatUrl() != null) {
-                attachArgs.add("-stat-url");
-                attachArgs.add(bootstrap.getStatUrl());
-            }
+                if (bootstrap.getTunnelServer() != null) {
+                    attachArgs.add("-tunnel-server");
+                    attachArgs.add(bootstrap.getTunnelServer());
+                }
+                if (bootstrap.getAgentId() != null) {
+                    attachArgs.add("-agent-id");
+                    attachArgs.add(bootstrap.getAgentId());
+                }
+                if (bootstrap.getStatUrl() != null) {
+                    attachArgs.add("-stat-url");
+                    attachArgs.add(bootstrap.getStatUrl());
+                }
 
-            if (bootstrap.getDisabledCommands() != null){
-                attachArgs.add("-disabled-commands");
-                attachArgs.add(bootstrap.getDisabledCommands());
+                if (bootstrap.getDisabledCommands() != null) {
+                    attachArgs.add("-disabled-commands");
+                    attachArgs.add(bootstrap.getDisabledCommands());
+                }
+
+                AnsiLog.info("Try to attach process " + pid);
+                AnsiLog.debug("Start arthas-core.jar args: " + attachArgs);
+                ProcessUtils.startArthasCore(pid, attachArgs);
+
+                AnsiLog.info("Attach process {} success.", pid);
             }
-
-            AnsiLog.info("Try to attach process " + pid);
-            AnsiLog.debug("Start arthas-core.jar args: " + attachArgs);
-            ProcessUtils.startArthasCore(pid, attachArgs);
-
-            AnsiLog.info("Attach process {} success.", pid);
         }
 
         if (bootstrap.isAttachOnly()) {
@@ -688,15 +713,19 @@ public class Bootstrap {
 
         result.append("Local versions:\n");
         for (String version : versionList) {
-            result.append(" " + version).append('\n');
+            result.append(" ").append(version).append('\n');
         }
         result.append("Remote versions:\n");
 
-		List<String> remoteVersions = DownloadUtils.readRemoteVersions();
-		Collections.reverse(remoteVersions);
-		for (String version : remoteVersions) {
-			result.append(" " + version).append('\n');
-		}
+        List<String> remoteVersions = DownloadUtils.readRemoteVersions();
+        if (remoteVersions != null) {
+            Collections.reverse(remoteVersions);
+            for (String version : remoteVersions) {
+                result.append(" " + version).append('\n');
+            }
+        } else {
+            result.append(" unknown\n");
+        }
         return result.toString();
     }
 
@@ -756,7 +785,7 @@ public class Bootstrap {
         return repoMirror;
     }
 
-    public boolean isuseHttp() {
+    public boolean isUseHttp() {
         return useHttp;
     }
 
